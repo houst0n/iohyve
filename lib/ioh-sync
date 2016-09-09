@@ -4,21 +4,21 @@ __sync_check() {
 	cmd="zfs list | awk '{print \$1}' | egrep \"^$poolsource/$filesystem\$\""
 	eval $cmd
 	if [ $? -ne 0 ]; then
-		[ ! -z $CRON ] && echo "Error: zfs filesystem $poolsource/$filesystem does not exist....bye"
+		[ -z $CRON ] && echo "Error: zfs filesystem $poolsource/$filesystem does not exist....bye"
 		[ -f "$pid" ] && rm -f "$pid"
 		exit 1
 	fi
-	cmd="ssh $remote id"
+	cmd="ssh $remote id 2>&1 >/dev/null"
 	eval $cmd
 	if [ $? -ne 0 ]; then
-		[ ! -z $CRON ] && echo "could not execute remote test command: $cmd please fix!...bye"
+		[ -z $CRON ] && echo "could not execute remote test command: $cmd please fix!...bye"
 		[ -f "$pid" ] && rm -f "$pid"
 		exit 2
 	fi
-	cmd="ssh $remote zfs list | awk '{print \$1}' |  egrep \"^$pooldest/$filesystem\$\""
+	cmd="ssh $remote zfs list | awk '{print \$1}' |  egrep \"^$pooldest/$filesystem\$\" 2>&1 >/dev/null"
 	eval $cmd
 	if [ $? -ne 0 ]; then
-		[ ! -z $CRON ] && echo "Warning: zfs remote filesystem $pooldest/$filesystem does not exist"
+		[ -z $CRON ] && echo "Warning: zfs remote filesystem $pooldest/$filesystem does not exist"
 	fi
 	__sync_last_remote_syncsnapshot_exist 1 ${pooldest} ${filesystem} ${remote}
 }
@@ -27,16 +27,16 @@ __sync_create_snapshot() {
 	cmd="zfs snapshot -r $1/$2@sync-$3"
 	eval $cmd
 	if [ $? -ne 0  ]; then
-		[ ! -z $CRON ] && echo "Error: snapshot failed... bye" >&2
+		[ -z $CRON ] && echo "Error: snapshot failed... bye" >&2
 		[ -f "$pid" ] && rm -f "$pid"
 		exit 1
 	fi
 
 	__sync_last_snapshot 1 $1 $2
 	if [ "${last}" == "${curtime}" ]; then
-		[ ! -z $CRON ] && echo "Snapshot created: OK"
+		[ -z $CRON ] && echo "Snapshot created: OK"
 	else
-		[ ! -z $CRON ] && echo "Snapshot failed: ${last} - ${curtime}!" >&2
+		[ -z $CRON ] && echo "Snapshot failed: ${last} - ${curtime}!" >&2
 		[ -f "$pid" ] && rm -f "$pid"
 		exit 1
 	fi
@@ -48,7 +48,7 @@ __sync_last_remote_syncsnapshot_exist() {
 	[ -z "$last" ] && return
 	echo $last | grep "@sync" 2>&1 >/dev/null
 	if [ ! $? -eq 0 ]; then
-		[ ! -z $CRON ] && echo "last remote snapshot is not of type @sync.....bye" 
+		[ -z $CRON ] && echo "last remote snapshot is not of type @sync.....bye" 
 		[ -f "$pid" ] && rm -f "$pid"
 		exit 3
 	fi
@@ -67,22 +67,22 @@ __sync_last_snapshot() {
 __sync_sync() {
 	__sync_last_snapshot 1 $2 $3 $4
 	last_remote=${last}
-	[ ! -z $CRON ] && echo "last remote snapshot: ${last_remote}"
+	[ -z $CRON ] && echo "last remote snapshot: ${last_remote}"
 	__sync_last_snapshot 1 $1 $3
 	last_local=${last}
-	[ ! -z $CRON ] && echo "last local snapshot: ${last_local}"
+	[ -z $CRON ] && echo "last local snapshot: ${last_local}"
 
 	if [ "$last_remote" == "" ]; then
-		[ ! -z $CRON ] && echo "no remote snapshot: full send->receive"
+		[ -z $CRON ] && echo "no remote snapshot: full send->receive"
 		cmda="zfs send -R $1/$3@sync-${last_local}"
 		cmdb="zfs receive -F -d $2"
 		cmd="${cmda} | ssh root@$4 ${cmdb}"
-		[ ! -z $CRON ] && echo "running: $cmd"
+		[ -z $CRON ] && echo "running: $cmd"
 		eval $cmd
 		return
 	fi
 
-	[ ! -z $CRON ] && echo "Syncing: to ${last_local} from ${last_remote}"
+	[ -z $CRON ] && echo "Syncing: to ${last_local} from ${last_remote}"
 
 	cmda="zfs send -R -i $1/$3@sync-${last_remote} $1/$3@sync-${last_local}"
 	cmdb="zfs receive -F -d $2"
@@ -97,21 +97,21 @@ __sync_cleanup() {
 	__sync_last_snapshot 1 $1 $3
 	last_local=${last}
 
-	[ ! -z $CRON ] && echo "Start cleanup local: ${last_local}, remote: ${last_remote}"	
+	[ -z $CRON ] && echo "Start cleanup local: ${last_local}, remote: ${last_remote}"	
 
 	if [ "${last_local}" != "${last_remote}" ]; then
-		[ ! -z $CRON ] && echo "Snapshots do not match after sync; local: ${last_local}, remote: ${last_remote}" >&2
+		[ -z $CRON ] && echo "Snapshots do not match after sync; local: ${last_local}, remote: ${last_remote}" >&2
 		[ -f "$pid" ] && rm -f "$pid"
 		exit 1
 	fi
 
 	for destroy in $(zfs list -H -r -s creation -t snapshot -o name $1/$3 | grep @sync- | grep -v @sync-${last_local}); do
-		[ ! -z $CRON ] && echo "Destroying local: ${destroy}"
+		[ -z $CRON ] && echo "Destroying local: ${destroy}"
 		zfs destroy ${destroy}
 	done
 
 	for destroy in $(ssh root@$4 zfs list -H -r -s creation -t snapshot -o name $2/$3 | grep @sync- | grep -v @sync-${last_remote}); do
-		[ ! -z $CRON ] && echo "Destroying remote: ${destroy}"
+		[ -z $CRON ] && echo "Destroying remote: ${destroy}"
 		ssh root@$4 zfs destroy ${destroy}
 	done
 }
@@ -130,10 +130,11 @@ __sync () {
 
 		pid="/var/run/$(echo $filesystem | sed -e 's/\//-/g').zfssync"
 
-		if [ $interval -ne $curmin ]; then
-			[ ! -z $CRON ] && echo "This sync only happens at $interval past the hour...."
-			exit 0
-		fi
+#		if [ $interval -ne $curmin ]; then
+#			[ -z $CRON ] && echo "This sync only happens at $interval past the hour...."
+#			exit 0
+#		fi
+
 		if [ -f "$pid" ]; then
 			echo "echo already running for this fs (found $pid)"
 			exit 1
@@ -141,7 +142,7 @@ __sync () {
 			touch $pid 
 		fi
 
-		if [ ! -z $CRON ]; then
+		if [ -z $CRON ]; then
 			echo "Parameters"
 			echo "=========="
 			echo "Source: ${poolsource}"
