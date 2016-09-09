@@ -1,0 +1,179 @@
+#!/bin/sh
+
+__sync_check() {
+	cmd="zfs list | awk '{print \$1}' | egrep \"^$poolsource/$filesystem\$\""
+	eval $cmd
+	if [ $? -ne 0 ]; then
+		echo "Error: zfs filesystem $poolsource/$filesystem does not exist....bye"
+		[ -f "$pid" ] && rm -f "$pid"
+		exit 1
+	fi
+	cmd="ssh $remote id"
+	eval $cmd
+	if [ $? -ne 0 ]; then
+		echo "could not execute remote test command: $cmd please fix!...bye"
+		[ -f "$pid" ] && rm -f "$pid"
+		exit 2
+	fi
+	cmd="ssh $remote zfs list | awk '{print \$1}' |  egrep \"^$pooldest/$filesystem\$\""
+	eval $cmd
+	if [ $? -ne 0 ]; then
+		echo "Warning: zfs remote filesystem $pooldest/$filesystem does not exist"
+	fi
+	__sync_last_remote_syncsnapshot_exist 1 ${pooldest} ${filesystem} ${remote}
+}
+
+__sync_create_snapshot() {
+	cmd="zfs snapshot -r $1/$2@sync-$3"
+	eval $cmd
+	if [ $? -ne 0  ]; then
+		echo "Error: snapshot failed... bye" >&2
+		[ -f "$pid" ] && rm -f "$pid"
+		exit 1
+	fi
+
+	__sync_last_snapshot 1 $1 $2
+	if [ "${last}" == "${curtime}" ]; then
+		echo "Snapshot created: OK"
+	else
+		echo "Snapshot failed: ${last} - ${curtime}!" >&2
+		[ -f "$pid" ] && rm -f "$pid"
+		exit 1
+	fi
+}
+
+__sync_last_remote_syncsnapshot_exist() {
+	cmd="zfs list -H -r -s creation -t snapshot -o name $2/$3|tail -$1|head -1"
+	last=$(ssh root@$4 $cmd)
+	[ -z "$last" ] && return
+	echo $last | grep "@sync"
+	if [ ! $? -eq 0 ]; then
+		echo "last remote snapshot is not of type @sync.....bye" 
+		[ -f "$pid" ] && rm -f "$pid"
+		exit 3
+	fi
+}
+
+__sync_last_snapshot() {
+	cmd="zfs list -H -r -s creation -t snapshot -o name $2/$3|tail -$1|head -1|awk '/@sync-/ { split(\$1,snapshot,\"@\"); print substr(snapshot[2],6) }'"
+
+	if [ "$4" == "" ]; then
+		last=$(eval $cmd)
+	else
+		last=$(ssh root@$4 $cmd)
+	fi
+}
+
+__sync_sync() {
+	__sync_last_snapshot 1 $2 $3 $4
+	last_remote=${last}
+	echo "last remote snapshot: ${last_remote}"
+	__sync_last_snapshot 1 $1 $3
+	last_local=${last}
+	echo "last local snapshot: ${last_local}"
+
+	if [ "$last_remote" == "" ]; then
+		echo "no remote snapshot: full send->receive"
+		cmda="zfs send -R $1/$3@sync-${last_local}"
+		cmdb="zfs receive -F -d $2"
+		cmd="${cmda} | ssh root@$4 ${cmdb}"
+		echo "running: $cmd"
+		eval $cmd
+		return
+	fi
+
+	echo "Syncing: to ${last_local} from ${last_remote}"
+
+	cmda="zfs send -R -i $1/$3@sync-${last_remote} $1/$3@sync-${last_local}"
+	cmdb="zfs receive -F -d $2"
+	cmd="${cmda} | ssh root@$4 ${cmdb}"
+
+	eval $cmd
+}
+
+__sync_cleanup() {
+	__sync_last_snapshot 1 $2 $3 $4
+	last_remote=${last}
+	__sync_last_snapshot 1 $1 $3
+	last_local=${last}
+
+	echo "Start cleanup local: ${last_local}, remote: ${last_remote}"	
+
+	if [ "${last_local}" != "${last_remote}" ]; then
+		echo "Snapshots do not match after sync; local: ${last_local}, remote: ${last_remote}" >&2
+		[ -f "$pid" ] && rm -f "$pid"
+		exit 1
+	fi
+
+	for destroy in $(zfs list -H -r -s creation -t snapshot -o name $1/$3 | grep @sync- | grep -v @sync-${last_local}); do
+		echo "Destroying local: ${destroy}"
+		zfs destroy ${destroy}
+	done
+
+	for destroy in $(ssh root@$4 zfs list -H -r -s creation -t snapshot -o name $2/$3 | grep @sync- | grep -v @sync-${last_remote}); do
+		echo "Destroying remote: ${destroy}"
+		ssh root@$4 zfs destroy ${destroy}
+	done
+}
+
+__sync () {
+	for dataset in $(zfs get -s local -o name iohyve:sync | grep -v NAME); do
+		config=$(zfs get -H -s local -o value iohyve:sync $dataset)
+		poolsource=$( echo $config | cut -d ' ' -f 1 )
+		pooldest=$(   echo $config | cut -d ' ' -f 2 )
+		filesystem=$( echo $config | cut -d ' ' -f 3 ) 
+		interval=$(   echo $config | cut -d ' ' -f 4 )
+		remote=$(     echo $config | cut -d ' ' -f 5 )
+		curtime=$(date +%y%m%d%H%M)
+
+		pid="/var/run/$(echo $filesystem | sed -e 's/\//-/g').zfssync"
+
+	#	if [ $interval -ne $(date "+%M") ]; then
+	#		echo "This sync only happens at $interval past the hour...."
+	#		exit 0
+	#	fi
+		if [ -f "$pid" ]; then
+			echo "echo already running for this fs (found $pid)....bye" 
+			exit 1
+		else
+			touch $pid 
+		fi
+
+		echo "Parameters"
+		echo "=========="
+		echo "Source: ${poolsource}"
+		echo "Dest:   ${pooldest}"
+		echo "FileS:  ${filesystem}"
+		echo "Remote: ${remote}"
+		echo "Snap:   ${curtime}"
+		echo
+
+		# Check
+		__sync_check
+
+		# Create snapshot
+		__sync_create_snapshot ${poolsource} ${filesystem} ${curtime}
+
+		# Sync incremental
+		__sync_sync ${poolsource} ${pooldest} ${filesystem} ${remote}
+
+		# Clean up local
+		__sync_cleanup ${poolsource} ${pooldest} ${filesystem} ${remote}
+
+		# remove pid
+		[ -f "$pid" ] && rm "$pid"
+	done
+}
+
+#
+#	syncadd <name> <min-of-hour> <destination-server> [destination-pool]
+#	syncremove <name> <destination-server>
+__sync_add () {
+	name=$2
+	min=$3
+	dest=$4
+	filesystem=$(zfs list -H -t filesystem | grep iohyve/$name | awk '{print $1}')
+	locpool=$(echo $filesystem | cut -d '/' -f 1)
+	rempool=${5:-$locpool}
+	zfs set iohyve:sync="$locpool $rempool iohyve/$name $min $dest" $filesystem
+}

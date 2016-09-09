@@ -118,6 +118,18 @@ __parse_cmd () {
 				__guest_destroy "$@"
 				exit
 				;;
+			sync)
+				__sync "$@"
+				exit
+				;;
+			sync_add)
+				__sync_add "$@"
+				exit
+				;;
+			syncremove)
+				__sync_remove "$@"
+				exit
+				;;
 			rename)
 				__guest_rename "$@"
 				exit
