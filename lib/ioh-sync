@@ -1,7 +1,7 @@
 #!/bin/sh
 
 __sync_check() {
-	cmd="zfs list | awk '{print \$1}' | egrep \"^$poolsource/$filesystem\$\""
+	cmd="zfs list | awk '{print \$1}' | egrep \"^$poolsource/$filesystem\$\" 2>&1 >/dev/null"
 	eval $cmd
 	if [ $? -ne 0 ]; then
 		[ -z $CRON ] && echo "Error: zfs filesystem $poolsource/$filesystem does not exist....bye"
@@ -76,7 +76,7 @@ __sync_sync() {
 		[ -z $CRON ] && echo "no remote snapshot: full send->receive"
 		cmda="zfs send -R $1/$3@sync-${last_local}"
 		cmdb="zfs receive -F -d $2"
-		cmd="${cmda} | ssh root@$4 ${cmdb}"
+		cmd="${cmda} | ssh root@$4 ${cmdb} 2>&1 >/dev/null"
 		[ -z $CRON ] && echo "running: $cmd"
 		eval $cmd
 		return
@@ -86,7 +86,7 @@ __sync_sync() {
 
 	cmda="zfs send -R -i $1/$3@sync-${last_remote} $1/$3@sync-${last_local}"
 	cmdb="zfs receive -F -d $2"
-	cmd="${cmda} | ssh root@$4 ${cmdb}"
+	cmd="${cmda} | ssh root@$4 ${cmdb} 2>&1 > /dev/null"
 
 	eval $cmd
 }
@@ -170,9 +170,6 @@ __sync () {
 	done
 }
 
-#
-#	syncadd <name> <min-of-hour> <destination-server> [destination-pool]
-#	syncremove <name> <destination-server>
 __sync_add () {
 	if [ $# -ne 5 ]; then
 		__help
