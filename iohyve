@@ -73,7 +73,8 @@ iohyve  version
 	destroy <name>
 	sync
 	syncadd <name> <min-of-hour> <destination-server> [destination-pool]
-	syncremove <name> <destination-server>
+	syncremove <name> 
+	synclist
 	rename <name> <newname>
 	delete [-f] <name>
 	set <name> <property=value> ...

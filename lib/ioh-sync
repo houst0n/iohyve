@@ -173,7 +173,12 @@ __sync () {
 #	syncadd <name> <min-of-hour> <destination-server> [destination-pool]
 #	syncremove <name> <destination-server>
 __sync_add () {
-	# We do this in loop to capture hosts which have disks in more than one pool
+	if [ $# -ne 5 ]; then
+		__help
+		exit 1
+	fi
+
+	# We do this in loop to catch VM's which have disks in more than one zpool
 	for filesystem in $(zfs list -H -t filesystem | grep iohyve/$2 | awk '{print $1}'); do
 		name=$2
 		min=$3
@@ -185,6 +190,11 @@ __sync_add () {
 }
 
 __sync_remove () {
+	if [ $# -ne 2 ]; then
+		__help
+		exit 1
+	fi
+
 	name=$2
 	for fs in $(zfs get -t filesystem -H -s local iohyve:sync | grep $name | awk '{print $1}' | sort | uniq ); do
 		zfs inherit iohyve:sync $fs
