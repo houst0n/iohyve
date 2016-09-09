@@ -117,6 +117,8 @@ __sync_cleanup() {
 }
 
 __sync () {
+	export CRON=$2
+
 	curmin=$(date "+%M")
 
 	for dataset in $(zfs get -s local -o name iohyve:sync | grep -v NAME); do
