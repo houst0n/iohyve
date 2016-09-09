@@ -130,10 +130,10 @@ __sync () {
 
 		pid="/var/run/$(echo $filesystem | sed -e 's/\//-/g').zfssync"
 
-#		if [ $interval -ne $curmin ]; then
-#			[ -z $CRON ] && echo "This sync only happens at $interval past the hour...."
-#			exit 0
-#		fi
+		if [ $interval -ne $curmin ]; then
+			[ -z $CRON ] && echo "This sync only happens at $interval past the hour...."
+			exit 0
+		fi
 
 		if [ -f "$pid" ]; then
 			echo "echo already running for this fs (found $pid)"
