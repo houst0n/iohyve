@@ -122,12 +122,16 @@ __parse_cmd () {
 				__sync "$@"
 				exit
 				;;
-			sync_add)
+			syncadd)
 				__sync_add "$@"
 				exit
 				;;
 			syncremove)
 				__sync_remove "$@"
+				exit
+				;;
+			synclist)
+				__sync_list "$@"
 				exit
 				;;
 			rename)
