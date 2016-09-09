@@ -117,11 +117,10 @@ __sync_cleanup() {
 }
 
 __sync () {
-	export CRON=$2
-
 	curmin=$(date "+%M")
 
 	for dataset in $(zfs get -s local -o name iohyve:sync | grep -v NAME); do
+		export CRON=$2
 		config=$(zfs get -H -s local -o value iohyve:sync $dataset)
 		poolsource=$( echo $config | cut -d ' ' -f 1 )
 		pooldest=$(   echo $config | cut -d ' ' -f 2 )
@@ -132,48 +131,47 @@ __sync () {
 
 		pid="/var/run/$(echo $filesystem | sed -e 's/\//-/g').zfssync"
 
-		if [ $interval -ne $curmin ]; then
-			[ -z $CRON ] && echo "This sync only happens at $interval past the hour...."
-			exit 0
+		if [ $interval -eq $curmin ] || [ "x$CRON" == "xIGNORE" ]; then
+			[ "x$CRON" == "xIGNORE" ] && unset CRON # For debugging
+			if [ -f "$pid" ]; then
+				echo "echo already running for this fs (found $pid)"
+				exit 1
+			else
+				touch $pid 
+			fi
+
+			if [ -z $CRON ]; then
+				echo "Parameters"
+				echo "=========="
+				echo "Source: ${poolsource}"
+				echo "Dest:   ${pooldest}"
+				echo "FileS:  ${filesystem}"
+				echo "Remote: ${remote}"
+				echo "Snap:   ${curtime}"
+				echo
+			fi
+
+			# Check
+			__sync_check
+
+			# Create snapshot
+			__sync_create_snapshot ${poolsource} ${filesystem} ${curtime}
+
+			# Sync incremental
+			__sync_sync ${poolsource} ${pooldest} ${filesystem} ${remote}
+
+			# Clean up local
+			__sync_cleanup ${poolsource} ${pooldest} ${filesystem} ${remote}
+
+			# remove pid
+			[ -f "$pid" ] && rm "$pid"
+
 		fi
-
-		if [ -f "$pid" ]; then
-			echo "echo already running for this fs (found $pid)"
-			exit 1
-		else
-			touch $pid 
-		fi
-
-		if [ -z $CRON ]; then
-			echo "Parameters"
-			echo "=========="
-			echo "Source: ${poolsource}"
-			echo "Dest:   ${pooldest}"
-			echo "FileS:  ${filesystem}"
-			echo "Remote: ${remote}"
-			echo "Snap:   ${curtime}"
-			echo
-		fi
-
-		# Check
-		__sync_check
-
-		# Create snapshot
-		__sync_create_snapshot ${poolsource} ${filesystem} ${curtime}
-
-		# Sync incremental
-		__sync_sync ${poolsource} ${pooldest} ${filesystem} ${remote}
-
-		# Clean up local
-		__sync_cleanup ${poolsource} ${pooldest} ${filesystem} ${remote}
-
-		# remove pid
-		[ -f "$pid" ] && rm "$pid"
 	done
 }
 
 __sync_add () {
-	if [ $# -ne 5 ]; then
+	if [ $# -ne 4 ]; then
 		__help
 		exit 1
 	fi
