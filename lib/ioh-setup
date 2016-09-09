@@ -136,27 +136,42 @@ __load_kernel_modules() {
 }
 
 __setup_network() {
-	local iface=$1
-	local bridgeif="$('ifconfig' -l | grep -F "bridge0" | cut -c1)"
-	if [ -z $bridgeif ]; then
-		echo "Setting up bridge0 on $iface..."
-		if ! sysctl net.link.tap.up_on_open=1 > /dev/null 2>&1; then
-			echo "cannot set 'net.link.tap.up_on_open': is if_tap loaded?"
-		fi
-		ifconfig bridge0 create descr "iohyve-bridge" addm $iface up
-	else
-		echo "bridge0 is already enabled on this machine..."
-		local sysctlexist
-		if ! sysctlexist="$(sysctl -n net.link.tap.up_on_open 2> /dev/null)"; then
-			echo "cannot set 'net.link.tap.up_on_open': is if_tap loaded?"
-			return 1
-		fi
-
-		if [ $sysctlexist = "0" ]; then
-			echo "Setting up correct sysctl value..."
-			sysctl net.link.tap.up_on_open=1
+	local ifacelist=$1
+	for iface in $(echo $ifacelist | tr ',' '\n'); do
+		local addflag=$2
+		local allbridges=$(ifconfig -l | tr ' ' '\n' | grep bridge | sort)
+		local lastbridge=$(echo $allbridges | tail -1 | sed -e 's/bridge//g' | awk '{print $NF}')
+		if [ -z $lastbridge ]; then
+			local nextbridge=0
 		else
-			echo "sysctl already setup properly as well..."
+			local nextbridge=$(expr $lastbridge + 1)
 		fi
-	fi
+		bridgeif="$(__bridge_for_iface $iface)"
+
+		if [ -z $bridgeif ]; then
+			if [ -z $addflag ]; then
+				echo "Setting up bridge$nextbridge on $iface..."
+				if ! sysctl net.link.tap.up_on_open=1 > /dev/null 2>&1; then
+					echo "cannot set 'net.link.tap.up_on_open': is if_tap loaded?"
+				fi
+			fi
+			ifconfig bridge$nextbridge create descr "iohyve-bridge-$iface" addm $iface up
+		else
+			if [ -z $addflag ]; then
+				echo "$bridgeif is already up on this machine..."
+				local sysctlexist
+				if ! sysctlexist="$(sysctl -n net.link.tap.up_on_open 2> /dev/null)"; then
+					echo "cannot set 'net.link.tap.up_on_open': is if_tap loaded?"
+					return 1
+				fi
+
+				if [ $sysctlexist = "0" ]; then
+					echo "Setting up correct sysctl value..."
+					sysctl net.link.tap.up_on_open=1
+				else
+					echo "sysctl already setup properly as well..."
+				fi
+			fi
+		fi
+	done
 }

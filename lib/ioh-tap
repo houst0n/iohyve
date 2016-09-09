@@ -2,11 +2,11 @@
 
 # List taps in use
 __tap_list() {
-	local guestlist="$(zfs list -H -o name -t volume | grep iohyve | cut -d'/' -f1-3)"
+	local guestlist="$(zfs list -H -o name -t filesystem | grep iohyve | cut -d'/' -f1-3)"
 	echo "Listing all network taps:"
 	for i in $guestlist ; do
-		conprop="$(zfs get -H -o value iohyve:tap $i)"
-		printf $i'......'$conprop'\n'
+		conprop="$(zfs get -H -o value -s local iohyve:tap $i)"
+		if [ ! -z $conprop ]; then printf $i'......'$conprop'\n'; fi
 	done
 }
 

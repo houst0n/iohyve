@@ -183,11 +183,11 @@ __zfs_cloneguest() {
 				local guestlist="$(zfs list -H -o name -t volume | grep iohyve | cut -d'/' -f1-3)"
 					listtaps(){
 						for i in $guestlist ; do
-							local tapprop="$(zfs get -H -o value iohyve:tap $i)"
+							local tapprop="$(zfs get -H -o value iohyve:tap $i | tr ',' '\n')"
 							printf $tapprop'\n'
 						done
 					}
-				local taplast="$(listtaps | sort -V | cut -c4- | tail -n1)"
+				local taplast="$(listtaps | cut -d '=' -f 1 |sort -V | cut -c4- | tail -n1)"
 				if [ -z $taplast ]; then
 					local tap='0'
 				else

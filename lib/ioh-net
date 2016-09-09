@@ -1,0 +1,61 @@
+__bridge_for_iface() {
+        local iface=$1
+        local allbridges=$(ifconfig -l | tr ' ' '\n' | grep bridge | sort)
+        local lastbridge=$(echo $allbridges | tail -1 | sed -e 's/bridge//g' | awk '{print $NF}')
+        bridgeif=
+
+        for bridge in $allbridges; do
+                if ! ifconfig $bridge | grep iohyve-bridge >/dev/null 2>&1; then
+                        continue; ## not an iohyve bridge
+                else
+                        if ! ifconfig $bridge | grep "member: $iface" >/dev/null 2>&1; then
+                                continue; ## iohyve bridge, but not the one we want
+                        else
+                                bridgeif=$bridge
+                        fi
+                fi
+        done
+
+	echo $bridgeif
+}
+
+__net_add () {
+	if [ $# -ne 3 ]; then
+		__help
+		exit 1
+	fi
+
+        local guestlist="$(zfs get -H -o name -t filesystem -s local iohyve:name)"
+
+        listtaps(){
+                for i in $guestlist ; do
+                        for tapent in $(zfs get -H -o value iohyve:tap $i| tr ',' '\n'); do
+				printf $tapent'\n'
+			done
+                done
+        }
+
+	local name=$2
+	local iface=$3
+	__setup_network $iface 666
+	local dataset="$(zfs get -H -s local -o name,value -t filesystem iohyve:name | tr '\t' ',' | grep $name | cut -f1 -d,)"
+	local tapprop="$(zfs get -H -o value iohyve:tap $dataset)"
+	local taplast="$(listtaps | cut -d '=' -f 1 | sort -V | cut -c4- | tail -n1 | sed -e 's/tap//')"
+        local tap="$(expr $taplast + 1)"
+	zfs set iohyve:tap="$tapprop,tap$tap=$iface" $dataset
+}
+
+__net_remove () {
+	if [ $# -ne 3 ]; then
+		__help
+		exit 1
+	fi
+
+	local name=$2
+	local iface=$3
+	local dataset="$(zfs get -H -s local -o name,value -t filesystem iohyve:name | tr '\t' ',' | grep $name | cut -f1 -d,)"
+	local tapprop="$(zfs get -H -o value iohyve:tap $dataset)"
+	local newprop=$(echo $tapprop | sed -E "s/(^.*),{0,1}tap.*=$iface(.*$)/\1\2/" | sed -e 's/,$//' | sed -e 's/^,//g')
+	zfs set iohyve:tap=$newprop $dataset
+}
+
